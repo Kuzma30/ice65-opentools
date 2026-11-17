@@ -1,0 +1,47 @@
+name: build and test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake git python3 python3-pip iverilog curl \
+            libboost-filesystem-dev libboost-program-options-dev \
+            libboost-iostreams-dev libboost-system-dev libboost-thread-dev \
+            libboost-dev libeigen3-dev
+          pip3 install --break-system-packages yowasp-yosys
+
+      - name: Cache tools
+        uses: actions/cache@v4
+        with:
+          path: install
+          key: tools-${{ hashFiles('patches/*.patch', 'scripts/setup.sh') }}
+
+      - name: Build icestorm and nextpnr with the L04 patches
+        run: |
+          if [ ! -x install/bin/nextpnr-ice40 ]; then scripts/setup.sh; fi
+
+      - name: Tests
+        run: |
+          export PATH="$PWD/install/bin:$PATH"
+          tests/run_all.sh
+
+      - name: Bitstreams
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bitstreams
+          path: |
+            build-tests/blinky/ds203_blinky.bin
+            build-tests/mixed/mixed.bin
+          if-no-files-found: ignore

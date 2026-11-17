@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Checks a bitstream built by ice65-build against the synthesized design:
+# the bitstream is unpacked (iceunpack -6), turned back into a netlist
+# (icebox_vlog) and simulated next to <out>_syn.v with random stimulus;
+# every output is compared after every clock edge.
+#
+#   flow/ice65-check -o <out> -t <top> -p <pins.pcf> -c <clk1,clk2,...> [-n steps]
+#
+# Checks place and route and the bitstream writer against the icestorm
+# database; errors of the database itself (parts of the chip not seen in
+# a vendor image) are not found this way.
+# Needs: iverilog, vvp, icestorm with the l04 patch (iceunpack,
+# icebox_explain, icebox_vlog in PATH, or $ICEBOX = icestorm/icebox), cells_sim.v of
+# yosys ($CELLS_SIM, found through yosys-config or yowasp-yosys otherwise).
+set -euo pipefail
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+OUT= TOP= PCF= CLKS= STEPS=20000
+while getopts "o:t:p:c:n:h" opt; do
+    case $opt in
+        o) OUT=$OPTARG ;;
+        t) TOP=$OPTARG ;;
+        p) PCF=$OPTARG ;;
+        c) CLKS=$OPTARG ;;
+        n) STEPS=$OPTARG ;;
+        *) sed -n '2,16p' "$0"; exit 1 ;;
+    esac
+done
+if [ -z "$OUT" ] || [ -z "$TOP" ] || [ -z "$PCF" ] || [ -z "$CLKS" ]; then
+    sed -n '2,16p' "$0"; exit 1
+fi
+
+ICEUNPACK=${ICEUNPACK:-iceunpack}
+# icebox scripts: installed as icebox_explain / icebox_vlog, or the *.py of
+# an icestorm source folder given by $ICEBOX
+find_tool() {
+    if [ -n "${ICEBOX:-}" ]; then echo "$ICEBOX/$1.py"; else command -v "$1"; fi
+}
+EXPLAIN=$(find_tool icebox_explain)
+VLOG=$(find_tool icebox_vlog)
+test -n "$EXPLAIN" && test -n "$VLOG" || { echo "icebox_explain / icebox_vlog not found (PATH or \$ICEBOX)"; exit 1; }
+if [ -z "${CELLS_SIM:-}" ]; then
+    if command -v yosys-config >/dev/null; then
+        CELLS_SIM=$(yosys-config --datdir)/ice40/cells_sim.v
+    else
+        CELLS_SIM=$(python3 -c "import yowasp_yosys, os; print(os.path.join(os.path.dirname(yowasp_yosys.__file__), 'share', 'ice40', 'cells_sim.v'))")
+    fi
+fi
+test -f "$CELLS_SIM" || { echo "cells_sim.v not found, set CELLS_SIM"; exit 1; }
+
+R=$OUT.check
+mkdir -p "$R"
+"$ICEUNPACK" -6 "$OUT.bin" "$R/unpacked.asc"
+UNKNOWN=$(python3 "$EXPLAIN" "$R/unpacked.asc" | grep -c '?' || true)
+echo "bits not in the database: $UNKNOWN"
+python3 "$VLOG" -n "${TOP}_rec" -p "$PCF" -s "$R/unpacked.asc" > "$R/recovered_raw.v" 2> "$R/icebox_vlog.log"
+python3 "$HERE/fix_vlog.py" "$R/recovered_raw.v" > "$R/recovered.v"
+python3 "$HERE/roundtrip_tb.py" "$R/recovered_raw.v" "${TOP}_rec" "$TOP" "$CLKS" "$STEPS" > "$R/tb.v"
+iverilog -g2012 -DNO_ICE40_DEFAULT_ASSIGNMENTS -s tb -o "$R/tb.vvp" \
+    "$R/tb.v" "${OUT}_syn.v" "$HERE/sim_extra.v" "$R/recovered.v" "$CELLS_SIM" 2>&1 \
+    | grep -v "sorry\|warning" || true
+vvp -n "$R/tb.vvp" > "$R/sim.log" 2>&1 || true
+RESULT=$(grep "checked=" "$R/sim.log" | tail -1)
+grep MISMATCH "$R/sim.log" | head -5 || true
+echo "$RESULT"
+CHECKED=$(echo "$RESULT" | sed -n 's/checked=\([0-9]*\).*/\1/p')
+ERRORS=$(echo "$RESULT" | sed -n 's/.*errors=\([0-9]*\).*/\1/p')
+if [ "$UNKNOWN" = 0 ] && [ "${ERRORS:-1}" = 0 ] && [ "${CHECKED:-0}" -gt 0 ]; then
+    echo "PASS"
+else
+    echo "FAIL"; exit 1
+fi

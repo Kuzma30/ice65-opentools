@@ -1,0 +1,57 @@
+# DS203 (HW 2.6x / 2.7x, iCE65L04F-TVQ100C): all FPGA pins with a known pad.
+# Signal names of the board schematic V2.7. MCI: sampling clock from the STM32
+# (pin 15, a global buffer pin). ClrR (pin 65) is called C_D in the FPGA
+# sources of e-Design. BQ[0] is on pin 90 and BQ[1] on pin 91, as in the
+# Pins.pcf of e-Design and the stock V2.61 image (the schematic swaps the
+# two labels). Pins wired on the board but not used by the stock image
+# (1 Mode, 28 nWR, 60 FULL, 63 Ready, 69, 71, 72 SLOPE, 74) are listed at the
+# end: their pads are not confirmed.
+set_io nPD 2
+set_io MCI 15
+set_io DB[3] 20
+set_io CTr 24
+set_io DTr 25
+set_io NE1 27
+set_io nRD 29
+set_io DB[2] 30
+set_io DB[1] 33
+set_io DB[0] 34
+set_io DB[15] 36
+set_io DB[14] 37
+set_io DB[13] 40
+set_io DB[11] 41
+set_io DB[12] 42
+set_io DB[10] 51
+set_io DB[9] 52
+set_io DB[8] 53
+set_io DB[7] 54
+set_io DB[6] 56
+set_io DB[5] 57
+set_io DB[4] 59
+set_io ClrW 62
+set_io H_L 64
+set_io ClrR 65
+set_io SDA 66
+set_io SCK 68
+set_io AQ[2] 78
+set_io AQ[0] 79
+set_io AQ[1] 80
+set_io CKA 81
+set_io AQ[5] 82
+set_io AQ[7] 83
+set_io AQ[6] 85
+set_io AQ[4] 86
+set_io AQ[3] 87
+set_io BQ[0] 90
+set_io BQ[1] 91
+set_io BQ[2] 93
+set_io BQ[3] 94
+set_io BQ[4] 95
+set_io BQ[5] 96
+set_io BQ[6] 97
+set_io BQ[7] 99
+set_io CKB 100
+
+
+# not used by the stock image, pad not confirmed:
+# pin 1 Mode, 28 nWR, 60 FULL, 63 Ready, 69, 71, 72 SLOPE, 74

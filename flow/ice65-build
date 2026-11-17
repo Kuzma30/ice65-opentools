@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Builds a bitstream for the iCE65L04-VQ100: yosys -> nextpnr-ice40 --l04 -> icepack.
+#
+#   flow/ice65-build -t <top> -p <pins.pcf> -o <out> [options] <file.v>...
+#
+# Options:
+#   -t top      top module
+#   -p pcf      pin constraints (set_io <signal> <VQ100 pin>)
+#   -o out      output base name: <out>.bin, <out>.asc, <out>.json,
+#               <out>_syn.v (netlist after synthesis), <out>.*.log
+#   -f MHz      clock target for nextpnr (default 72)
+#   -s seed     placement seed (default 1)
+#   -a          allow failing timing (the L04 timing data is an estimate)
+#   -y opts     extra options of synth_ice40 (e.g. "-abc9")
+#   -n opts     extra options of nextpnr
+#
+# Tools: $YOSYS (default yosys, else yowasp-yosys), $NEXTPNR (nextpnr-ice40),
+# $ICEPACK (icepack), from PATH unless set.
+set -euo pipefail
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+TOP= PCF= OUT= FREQ=72 SEED=1 ALLOW= SYNTH_OPTS= NEXTPNR_OPTS=
+while getopts "t:p:o:f:s:ay:n:h" opt; do
+    case $opt in
+        t) TOP=$OPTARG ;;
+        p) PCF=$OPTARG ;;
+        o) OUT=$OPTARG ;;
+        f) FREQ=$OPTARG ;;
+        s) SEED=$OPTARG ;;
+        a) ALLOW=--timing-allow-fail ;;
+        y) SYNTH_OPTS=$OPTARG ;;
+        n) NEXTPNR_OPTS=$OPTARG ;;
+        *) sed -n '2,20p' "$0"; exit 1 ;;
+    esac
+done
+shift $((OPTIND - 1))
+if [ -z "$TOP" ] || [ -z "$PCF" ] || [ -z "$OUT" ] || [ $# -eq 0 ]; then
+    sed -n '2,20p' "$0"; exit 1
+fi
+
+if [ -z "${YOSYS:-}" ]; then
+    if command -v yosys >/dev/null; then YOSYS=yosys; else YOSYS=yowasp-yosys; fi
+fi
+NEXTPNR=${NEXTPNR:-nextpnr-ice40}
+ICEPACK=${ICEPACK:-icepack}
+
+mkdir -p "$(dirname "$OUT")"
+
+# synthesis: synth_ice40 with the RAM step for the 256 x 16 block RAM
+sed -e "s|@SYNTH_OPTS@|$SYNTH_OPTS|g" -e "s|@TOP@|$TOP|g" -e "s|@FLOW@|$HERE|g" \
+    -e "s|@OUT@|$OUT|g" "$HERE/synth_l04.ys.in" > "$OUT.ys"
+READ=""
+for f in "$@"; do READ="$READ read_verilog $f;"; done
+echo "yosys:   $OUT.yosys.log"
+$YOSYS -q -l "$OUT.yosys.log" -p "$READ script $OUT.ys"
+
+# place and route
+echo "nextpnr: $OUT.nextpnr.log"
+$NEXTPNR --l04 --package vq100 --json "$OUT.json" --pcf "$PCF" --asc "$OUT.asc" \
+    --freq "$FREQ" --seed "$SEED" $ALLOW $NEXTPNR_OPTS -l "$OUT.nextpnr.log" -q
+grep -E "(ICESTORM_LC|ICESTORM_RAM|SB_IO|SB_GB):" "$OUT.nextpnr.log" | sort -u | sed 's/^Info: */  /'
+grep -E "Max frequency for clock" "$OUT.nextpnr.log" | tail -8 | sed 's/^\(Info\|Warning\): */  /'
+
+# bitstream: icepack writes a 4 byte comment header, vendor images start
+# with the sync word 7e aa 99 7e
+$ICEPACK "$OUT.asc" "$OUT.pack.bin"
+tail -c +5 "$OUT.pack.bin" > "$OUT.bin"
+rm "$OUT.pack.bin"
+echo "bitstream: $OUT.bin ($(wc -c < "$OUT.bin") bytes)"
